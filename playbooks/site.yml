@@ -15,17 +15,17 @@
 
     - name: Install required kernel modules
       copy:
-        src: "{{ item }}"
+        src: "{{ item }}.ko"
         dest: /boot/kernel/
         owner: root
         group: wheel
         mode: 0555
       with_items:
-        - LINPROCFS.KO
-        - LINUX_COMMON.KO
+        - linprocfs
+        - linux_common
 
     - name: Load Linux proc filesystem kernel module
-      command: "kldload linprocfs.ko"
+      command: "kldload /boot/kernel/linprocfs.ko"
 
     - name: Verify compatibility modules are loaded
       command: kldstat
