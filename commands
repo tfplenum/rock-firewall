@@ -1,0 +1,2 @@
+[On Ansible Controller]
+ansible -m raw -a "pkg install -y python27" mybsdhost1
