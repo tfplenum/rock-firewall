@@ -6,244 +6,75 @@
 
 ---
 
-- name: Update all hosts to most recent packages
+- name: Configure Firewall
   hosts: all
   tasks:
-  - name: Update all packages
-    yum:
-      name: '*'
-      state: latest
-      exclude: ceph-deploy,cockpit*
-  # TODO: This should be removed after updates have been out for a bit
-  - name: 'Bump the NetworkManager service in case of https://access.redhat.com/solutions/3416301'
-    systemd:
-      name: NetworkManager
-      state: restarted
 
-- name: Install Controller Dependancies
-  hosts: localhost
-  tasks:
-  - name: Install python-netaddr
-    yum:
-      name: "python-netaddr"
-      state: installed
+    - name: Install beats
+      command: "pkg add http://pkg.freebsd.org/FreeBSD:11:amd64/latest/All/beats-{{ elastic_version }}.txz"
 
-- name: Install Controller Dependancies
-  hosts: all
-  tasks:
-  - name: Install NetworkManager packages
-    yum:
-      name: "NetworkManager-glib"
-      state: installed
+    - name: Install required kernel modules
+      copy:
+        src: "{{ item }}"
+        dest: /boot/kernel/
+        owner: root
+        group: wheel
+        mode: 0555
+      with_items:
+        - LINPROCFS.KO
+        - LINUX_COMMON.KO
 
-- name: Verify Ansible meets version requirements
-  hosts: localhost
-  tasks:
-  - fail:
-      msg: "You must update Ansible to at least 2.5.0 to use this code. Verify you have the EPEL repository enabled and then update Ansible."
-    when: "ansible_version.full is version('2.5', '<=')"
-  tags: preflight
+    - name: Load Linux proc filesystem kernel module
+      command: "kldload linprocfs.ko"
 
-- name: dnsmasq
-  hosts: all
-  gather_facts: no
-  any_errors_fatal: true
-  pre_tasks:
-    - setup:
-  roles:
-    - dnsmasq
-  tags: dnsmasq
+    - name: Verify compatibility modules are loaded
+      command: kldstat
+      register: kldstat
 
-- name: Generate SSH keys
-  hosts:
-    - localhost
-    - all
-  connection: ssh
-  any_errors_fatal: true
-  vars:
-    ssh_known_hosts_command: "ssh-keyscan -T 10"
-    ssh_known_hosts_file: "{{ lookup('env','HOME') + '/.ssh/known_hosts' }}"
-    ssh_known_hosts: "{{ groups['all'] }}"
+    - debug:
+        msg: "{{ kldstat.stdout }}"
 
-    # This takes the groups['all'] list, which is every host, feeds it into map, which then
-    # performs a regex_replace on each element. The regex_replace replaces .lan in each
-    # element to nothing or ''. Finally, we feed that back into list because Ansible
-    # expects the final product to be a list.
-    ssh_short_known_hosts: "{{ groups['all'] | map('regex_replace','(.lan)','' ) | list }}"
-  tasks:
-    - import_tasks: generate_ssh_keys.yml
-  tags: genkeys
+    - name: Create the directory to be used as the linux proc filesystem mount point
+      file:
+        path: "{{ linproc_mountpoint }}"
+        state: directory
+        owner: root
+        group: wheel
+        mode: 0755
 
-- name: Perform preflight checks
-  hosts: all
-  roles:
-    - preflight_checks
-  tags: preflight
+    - name: Mount linproc file system
+      mount:
+        path: "{{ linproc_mountpoint }}"
+        src: '/dev/null'
+        state: mounted
+        fstype: linprocfs
 
-- name: Common Setup
-  hosts:
-    - master-server
-    - nodes
-  gather_facts: no
-  any_errors_fatal: true
-  pre_tasks:
-    - setup:
-  roles:
-    - common
-    - chrony
-  tags:
-    - common
+    - name: Mount linproc file system
+      mount:
+        path: "{{ linproc_mountpoint }}"
+        src: '/dev/null'
+        state: mounted
+        fstype: linprocfs
 
-- name: Configure kube master
-  hosts: master-server
-  gather_facts: no
-  any_errors_fatal: true
-  pre_tasks:
-    - setup:
-  roles:
-    - kubernetes/common
-    - kubernetes/master
-  tags:
-    - kube-master
+    - name: Confirm linproc information is available
+      command: 'ls /compat/linux/proc/'
+      register: ls
 
-- name: Configure kube nodes
-  hosts:
-    - remote-sensors
-    - sensors
-    - servers
-  gather_facts: no
-  any_errors_fatal: true
-  pre_tasks:
-    - setup:
-  roles:
-    - kubernetes/common
-    - kubernetes/node
-  tags:
-    - add-node
-    - kube-node
+    - debug:
+        msg: "{{ ls.stdout }}"
 
-- name: Setup Ceph
-  hosts: master-server
-  gather_facts: no
-  any_errors_fatal: true
-  pre_tasks:
-    - setup:
-  roles:
-    - ceph
-  tags:
-    - ceph
+    - name: Mount proc file system
+      mount:
+        path: "/proc"
+        src: 'proc'
+        state: mounted
+        fstype: procfs
 
-- name: Deploy Elasticsearch
-  hosts: master-server
-  gather_facts: no
-  any_errors_fatal: true
-  pre_tasks:
-    - setup:
-  roles:
-    - elasticsearch
-  tags:
-    - elasticsearch
+    - name: Confirm proc information is available
+      command: 'ls /proc'
+      register: ls
 
-- name: Deploy Logstash
-  hosts: master-server
-  gather_facts: no
-  any_errors_fatal: true
-  pre_tasks:
-    - setup:
-  roles:
-    - logstash
-  tags:
-    - logstash
-
-- name: Deploy Kibana
-  hosts: master-server
-  gather_facts: no
-  any_errors_fatal: true
-  pre_tasks:
-    - setup:
-  roles:
-    - kibana
-  tags:
-    - kibana
-
-- name: Deploy metricbeats
-  hosts: master-server
-  gather_facts: no
-  any_errors_fatal: true
-  pre_tasks:
-    - setup:
-  roles:
-    - metricbeat
-  tags:
-    - metricbeat
-
-- name: Deploy Kafka
-  hosts: master-server
-  gather_facts: no
-  any_errors_fatal: true
-  pre_tasks:
-    - setup:
-  roles:
-    - { role: kafka, remote: true }
-    - { role: kafka, remote: false }
-  tags:
-    - kafka
-
-- name: Deploy Bro
-  hosts: master-server
-  gather_facts: no
-  any_errors_fatal: true
-  pre_tasks:
-    - setup:
-  roles:
-    - bro
-  tags:
-  - bro
-
-- name: Deploy Moloch
-  hosts: all
-  gather_facts: no
-  any_errors_fatal: true
-  pre_tasks:
-    - setup:
-  roles:
-    - moloch
-  tags:
-    - moloch
-
-- name: Deploy Suricata
-  hosts: master-server
-  gather_facts: no
-  any_errors_fatal: true
-  pre_tasks:
-    - setup:
-  roles:
-    - suricata
-  tags:
-    - suricata
-
-- name: Deploy Stenographer
-  hosts:
-    - sensors
-    - remote-sensors
-  gather_facts: no
-  any_errors_fatal: true
-  pre_tasks:
-    - setup:
-  roles:
-    - stenographer
-  tags:
-    - stenographer
-
-- name: Deploy Docket
-  hosts: all
-  gather_facts: no
-  any_errors_fatal: true
-  pre_tasks:
-    - setup:
-  roles:
-    - docket
-  tags:
-    - docket
+    - debug:
+        msg: "{{ ls.stdout }}"
 
 ...
